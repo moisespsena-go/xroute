@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
+	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
-	"regexp"
-	"os"
-	"runtime/debug"
 )
 
 var _ Router = &Mux{}
 
-
-type ErrorHandler func(debug bool, w ResponseWriterWithStatus, r *http.Request, context *RouteContext, begin time.Time, err interface{})
+type ErrorHandler func(url *url.URL, debug bool, w ResponseWriterWithStatus, r *http.Request, context *RouteContext, begin time.Time, err interface{})
 
 // Mux is a simple HTTP route multiplexer that parses a request path,
 // records any URL params, and executes an end handler. It implements
@@ -69,7 +69,7 @@ type Mux struct {
 	methodNotAllowedHandler ContextHandler
 	buildRouterMutex        sync.Mutex
 	logRequests             bool
-	logRequestHandler       func(w ResponseWriterWithStatus, r *http.Request, arg *RouteContext, begin time.Time)
+	logRequestHandler       func(url *url.URL, w ResponseWriterWithStatus, r *http.Request, arg *RouteContext, begin time.Time)
 	interseptErrors         bool
 	debug                   bool
 	api                     bool
@@ -78,13 +78,13 @@ type Mux struct {
 
 var LogRequestIgnore, _ = regexp.Compile("\\.(css|js|jpg|png|ico|ttf|woff2?)$")
 
-func DefaultLogRequestsHandler(w ResponseWriterWithStatus, r *http.Request, context *RouteContext, begin time.Time)  {
+func DefaultLogRequestsHandler(url *url.URL, w ResponseWriterWithStatus, r *http.Request, context *RouteContext, begin time.Time) {
 	if !LogRequestIgnore.MatchString(r.URL.Path) || w.Status() >= 400 {
 		method := r.Method
 		if context.RouteMethod != method {
 			method += " -> " + context.RouteMethod
 		}
-		fmt.Printf("Finish [%s] %d %v Took %.2fms\n", method, w.Status(), r.URL, time.Now().Sub(begin).Seconds()*1000)
+		fmt.Printf("Finish [%s] %d %v Took %.2fms\n", method, w.Status(), url, time.Now().Sub(begin).Seconds()*1000)
 	}
 }
 
@@ -97,7 +97,7 @@ func prepareStack(stack []byte) []byte {
 	return stack
 }
 
-func DefaultErrorHandler(isdebug bool, w ResponseWriterWithStatus, r *http.Request, context *RouteContext, begin time.Time, err interface{}) {
+func DefaultErrorHandler(url *url.URL, isdebug bool, w ResponseWriterWithStatus, r *http.Request, context *RouteContext, begin time.Time, err interface{}) {
 	w.WriteHeader(500)
 	errMessage := []byte(fmt.Sprintf("\nRequest failure: %v\n", err))
 	os.Stderr.Write(errMessage)
@@ -115,6 +115,11 @@ func DefaultErrorHandler(isdebug bool, w ResponseWriterWithStatus, r *http.Reque
 	} else {
 		w.Write([]byte("Request failure. See system administrator to solve it."))
 	}
+	method := r.Method
+	if context.RouteMethod != method {
+		method += " -> " + context.RouteMethod
+	}
+	fmt.Printf("Finish [%s] %d %v Took %.2fms\n", method, w.Status(), url, time.Now().Sub(begin).Seconds()*1000)
 }
 
 // NewMux returns a newly initialized Mux object that implements the Router
@@ -125,7 +130,7 @@ func NewMux(name ...string) *Mux {
 		handlerInterseptors: NewMiddlewaresStack("HandlerInterseptors", false),
 		interseptors:        NewMiddlewaresStack("Interseptors", false),
 		middlewares:         NewMiddlewaresStack("Middlewares", true),
-		ApiExtensions: []string{"json", "xml"},
+		ApiExtensions:       []string{"json", "xml"},
 	}
 
 	if len(name) > 0 {
@@ -249,6 +254,11 @@ func (mx *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
+	url := GetOriginalUrl(r)
+	if url == nil {
+		urlCopy := *r.URL
+		url = &urlCopy
+	}
 	if rctx == nil {
 		r, rctx = GetOrNewRouteContextForRequest(r)
 	}
@@ -266,7 +276,7 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 					if handler == nil {
 						handler = DefaultErrorHandler
 					}
-					handler(mx.debug, ws, r, rctx, begin, rec)
+					handler(url, mx.debug, ws, r, rctx, begin, rec)
 				}
 			})
 		}
@@ -276,7 +286,7 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 				if handler == nil {
 					handler = DefaultLogRequestsHandler
 				}
-				handler(ws, r, rctx, begin)
+				handler(url, ws, r, rctx, begin)
 			})
 		}
 
@@ -712,7 +722,7 @@ func (mx *Mux) handle(method methodTyp, pattern string, handler interface{}) (no
 	// Add the endpoint to the tree and return the node
 	if mx.api {
 		for _, ext := range mx.ApiExtensions {
-			nodes = append(nodes, mx.tree.InsertRoute(method, pattern + "." + ext, h))
+			nodes = append(nodes, mx.tree.InsertRoute(method, pattern+"."+ext, h))
 		}
 	}
 	nodes = append(nodes, mx.tree.InsertRoute(method, pattern, h))
@@ -767,7 +777,7 @@ func (mx *Mux) routeHTTP(w http.ResponseWriter, r *http.Request, rctx *RouteCont
 	}
 
 	for _, ext := range mx.ApiExtensions {
-		if pos := strings.LastIndex(routePath, "." + ext); pos != -1 {
+		if pos := strings.LastIndex(routePath, "."+ext); pos != -1 {
 			routePath = routePath[0:pos] + "/." + ext
 			// Find the route for api
 			if _, _, h := mx.tree.FindRoute(rctx, method, routePath); h != nil {

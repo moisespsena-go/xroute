@@ -2,7 +2,7 @@ package route
 
 import (
 	"fmt"
-	"github.com/moisespsena/topsort"
+	"github.com/moisespsena/go-topsort"
 	"strings"
 )
 
@@ -27,7 +27,7 @@ func NewMiddleware(f interface{}) *Middleware {
 	} else if m, ok := f.(*Middleware); ok {
 		return m
 	}
-	panic(fmt.Errorf("Invalid Middleware: %v", f))
+	panic(fmt.Errorf("Invalid Middleware: %s", f))
 }
 
 type MiddlewaresStack struct {
