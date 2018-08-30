@@ -94,6 +94,8 @@ type node struct {
 	// child nodes should be stored in-order for iteration,
 	// in groups of the node type.
 	children [ntCatchAll + 1]nodes
+
+	suffix string
 }
 
 // endpoints is a mapping of http method constants to handlers
@@ -178,6 +180,10 @@ func (n *node) GetRoute(method methodTyp, pattern string) ContextHandler {
 }
 
 func (n *node) InsertRoute(method methodTyp, pattern string, handler ContextHandler) *node {
+	return n.InsertRoute(method, pattern, handler)
+}
+
+func (n *node) InsertRouteCb(method methodTyp, pattern string, handler ContextHandler, cb func(n *node)) *node {
 	var parent *node
 	search := pattern
 
@@ -212,9 +218,9 @@ func (n *node) InsertRoute(method methodTyp, pattern string, handler ContextHand
 		// No edge, create one
 		if n == nil {
 			child := &node{label: label, tail: segTail, prefix: search}
-			hn := parent.addChild(child, search)
-			hn.setEndpoint(method, handler, pattern)
+			hn := parent.addChildCb(child, search, cb)
 
+			hn.setEndpoint(method, handler, pattern)
 			return hn
 		}
 
@@ -248,7 +254,7 @@ func (n *node) InsertRoute(method methodTyp, pattern string, handler ContextHand
 		// Restore the existing node
 		n.label = n.prefix[commonPrefix]
 		n.prefix = n.prefix[commonPrefix:]
-		child.addChild(n, n.prefix)
+		child.addChildCb(n, n.prefix, cb)
 
 		// If the new key is a subset, set the method/handler on this node and finish.
 		search = search[commonPrefix:]
@@ -263,7 +269,7 @@ func (n *node) InsertRoute(method methodTyp, pattern string, handler ContextHand
 			label:  search[0],
 			prefix: search,
 		}
-		hn := child.addChild(subchild, search)
+		hn := child.addChildCb(subchild, search, cb)
 		hn.setEndpoint(method, handler, pattern)
 		return hn
 	}
@@ -274,6 +280,10 @@ func (n *node) InsertRoute(method methodTyp, pattern string, handler ContextHand
 // into different nodes. In addition, addChild will recursively call itself until every
 // pattern segment is added to the url pattern tree as individual nodes, depending on type.
 func (n *node) addChild(child *node, prefix string) *node {
+	return n.addChildCb(child, prefix, func(n *node) {})
+}
+
+func (n *node) addChildCb(child *node, prefix string, cb func(n *node)) *node {
 	search := prefix
 
 	// handler leaf node added to the tree is the child.
@@ -328,7 +338,7 @@ func (n *node) addChild(child *node, prefix string) *node {
 					label:  search[0],
 					prefix: search,
 				}
-				hn = child.addChild(nn, search)
+				hn = child.addChildCb(nn, search, cb)
 			}
 
 		} else if segStartIdx > 0 {
@@ -347,8 +357,7 @@ func (n *node) addChild(child *node, prefix string) *node {
 				label: search[0],
 				tail:  segTail,
 			}
-			hn = child.addChild(nn, search)
-
+			hn = child.addChildCb(nn, search, cb)
 		}
 	}
 
@@ -496,7 +505,11 @@ func (n *node) findRoute(rctx *RouteContext, method methodTyp, path string) *nod
 					continue
 				}
 
-				rctx.routeParams.Values = append(rctx.routeParams.Values, xsearch[:p])
+				value := xsearch[:p]
+				if n.suffix != "" {
+					value = strings.TrimSuffix(value, n.suffix)
+				}
+				rctx.routeParams.Values = append(rctx.routeParams.Values, strings.TrimSuffix(value, ".json"))
 				xsearch = xsearch[p:]
 				break
 			}

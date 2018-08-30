@@ -722,7 +722,9 @@ func (mx *Mux) handle(method methodTyp, pattern string, handler interface{}) (no
 	// Add the endpoint to the tree and return the node
 	if mx.api {
 		for _, ext := range mx.ApiExtensions {
-			nodes = append(nodes, mx.tree.InsertRoute(method, pattern+"."+ext, h))
+			node := mx.tree.InsertRoute(method, pattern+"."+ext, h)
+			node.suffix = "."+ext
+			nodes = append(nodes, node)
 		}
 	}
 	nodes = append(nodes, mx.tree.InsertRoute(method, pattern, h))
