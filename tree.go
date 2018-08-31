@@ -180,7 +180,7 @@ func (n *node) GetRoute(method methodTyp, pattern string) ContextHandler {
 }
 
 func (n *node) InsertRoute(method methodTyp, pattern string, handler ContextHandler) *node {
-	return n.InsertRoute(method, pattern, handler)
+	return n.InsertRouteCb(method, pattern, handler, func(n *node) {})
 }
 
 func (n *node) InsertRouteCb(method methodTyp, pattern string, handler ContextHandler, cb func(n *node)) *node {
