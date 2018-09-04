@@ -786,8 +786,8 @@ func bigMux() Router {
 	})
 	r.Group(func(r Router) {
 		r.Use(func(next *ChainHandler) {
-				ctx := context.WithValue(next.request.Context(), ctxKey{"session.user"}, "elvis")
-				next.Next(ctx)
+			ctx := context.WithValue(next.request.Context(), ctxKey{"session.user"}, "elvis")
+			next.Next(ctx)
 		})
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -1444,8 +1444,8 @@ func TestServerBaseContext(t *testing.T) {
 }
 
 func TestRouteArg(t *testing.T) {
-	handler := func(w http.ResponseWriter, r *http.Request, arg *RouteContext) {
-		w.Write([]byte(arg.Value.(string)))
+	handler := func(w http.ResponseWriter, r *http.Request, ctx *RouteContext) {
+		w.Write([]byte(ctx.Router().Arg().(string)))
 	}
 
 	arg := "the arg"
@@ -1467,60 +1467,6 @@ func TestRouteArg(t *testing.T) {
 	}
 
 	if _, body := testRequest(t, ts, "GET", "/Sub", nil); body != arg {
-		t.Fatalf(body)
-	}
-}
-
-func TestRouteArgInherit(t *testing.T) {
-	handler := func(w http.ResponseWriter, r *http.Request, arg *RouteContext) {
-		w.Write([]byte(arg.Value.(string)))
-	}
-
-	sub := NewMux()
-	sub.Get("/", handler)
-
-	arg := "the arg"
-	r := NewRouter()
-	r.SetArg(arg)
-	r.Get("/", handler)
-	r.Mount("/Sub", sub)
-
-	ts := httptest.NewServer(r)
-	defer ts.Close()
-
-	if _, body := testRequest(t, ts, "GET", "/", nil); body != arg {
-		t.Fatalf(body)
-	}
-
-	if _, body := testRequest(t, ts, "GET", "/Sub", nil); body != arg {
-		t.Fatalf(body)
-	}
-}
-
-func TestRouteArgDiff(t *testing.T) {
-	handler := func(w http.ResponseWriter, r *http.Request, arg *RouteContext) {
-		w.Write([]byte(arg.Value.(string)))
-	}
-
-	subArg := "the Sub arg"
-	sub := NewMux()
-	sub.SetArg(subArg)
-	sub.Get("/", handler)
-
-	arg := "the arg"
-	r := NewRouter()
-	r.SetArg(arg)
-	r.Get("/", handler)
-	r.Mount("/Sub", sub)
-
-	ts := httptest.NewServer(r)
-	defer ts.Close()
-
-	if _, body := testRequest(t, ts, "GET", "/", nil); body != arg {
-		t.Fatalf(body)
-	}
-
-	if _, body := testRequest(t, ts, "GET", "/Sub", nil); body != subArg {
 		t.Fatalf(body)
 	}
 }

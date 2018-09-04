@@ -262,6 +262,9 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 	if rctx == nil {
 		r, rctx = GetOrNewRouteContextForRequest(r)
 	}
+
+	defer rctx.with(mx)
+
 	ws := ResponseWriter(w)
 	w = ws
 

@@ -50,6 +50,7 @@ type RouteContext struct {
 	RequestSetters      map[interface{}]RequestSetter
 	ChainRequestSetters map[interface{}]ChainRequestSetter
 	Handler             interface{}
+	RouterStack         []Router
 }
 
 // NewRouteContext returns a new routing Context object.
@@ -57,6 +58,33 @@ func NewRouteContext() *RouteContext {
 	c := &RouteContext{}
 	c.Reset()
 	return c
+}
+
+func (x *RouteContext) with(r Router) func() {
+	x.RouterStack = append(x.RouterStack, r)
+	return func() {
+		x.RouterStack = x.RouterStack[0 : len(x.RouterStack)-1]
+	}
+}
+
+func (x *RouteContext) Router() Router {
+	if x.RouterStack != nil {
+		return x.RouterStack[len(x.RouterStack)-1]
+	}
+	return nil
+}
+
+func (x *RouteContext) Routers() []Router {
+	return x.RouterStack
+}
+
+func (x *RouteContext) SetValue(v interface{}) *RouteContext {
+	x.Data[x.DefaultValueKey] = v
+	return x
+}
+
+func (x *RouteContext) Value() interface{} {
+	return x.Data[x.DefaultValueKey]
 }
 
 // Reset a routing context to its initial state.
