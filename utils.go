@@ -8,22 +8,23 @@ import (
 
 const ORIGINAL_URL = "origianal_url"
 
-func SetOriginalUrl(r *http.Request) *http.Request {
-	URL := *r.URL
-	return r.WithContext(context.WithValue(r.Context(), ORIGINAL_URL, &URL))
+func SetOriginalURL(r *http.Request) *http.Request {
+	var u url.URL
+	u = *r.URL
+	return r.WithContext(context.WithValue(r.Context(), ORIGINAL_URL, &u))
 }
 
-func SetOriginalUrlIfNotSetted(r *http.Request) *http.Request {
+func SetOriginalURLIfNotSetted(r *http.Request) *http.Request {
 	if r.Context().Value(ORIGINAL_URL) == nil {
-		return SetOriginalUrl(r)
+		return SetOriginalURL(r)
 	}
 	return r
 }
 
-func GetOriginalUrl(r *http.Request) *url.URL {
+func GetOriginalURL(r *http.Request) *url.URL {
 	URL := r.Context().Value(ORIGINAL_URL)
 	if URL == nil {
-		return nil
+		return r.URL
 	}
 	return URL.(*url.URL)
 }

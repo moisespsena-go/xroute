@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/op/go-logging"
 )
 
 var (
@@ -51,6 +53,9 @@ type RouteContext struct {
 	ChainRequestSetters map[interface{}]ChainRequestSetter
 	Handler             interface{}
 	RouterStack         []Router
+	Log                 *logging.Logger
+
+	ApiExt string
 }
 
 // NewRouteContext returns a new routing Context object.

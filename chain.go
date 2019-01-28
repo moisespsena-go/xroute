@@ -1,8 +1,8 @@
 package route
 
 import (
-	"net/http"
 	"context"
+	"net/http"
 )
 
 // Chain returns a Middlewares type from a slice of middleware handlers.
@@ -13,7 +13,10 @@ func Chain(middlewares ...*Middleware) Middlewares {
 // Handler builds and returns a http.Handler from the chain of middlewares,
 // with `h http.Handler` as the final handler.
 func (mws Middlewares) Handler(h interface{}) Handler {
-	return &ChainHandler{Middlewares:mws, Endpoint:HttpHandler(h)}
+	if len(mws) == 0 {
+		return HttpHandler(h)
+	}
+	return &ChainHandler{Middlewares: mws, Endpoint: HttpHandler(h)}
 }
 
 // ChainHandler is a http.Handler with support for handler composition and
@@ -38,7 +41,7 @@ func (c *ChainHandler) ServeHTTPContext(w http.ResponseWriter, r *http.Request, 
 		rctx = NewRouteContext()
 	}
 	rctx.Handler = c.Endpoint
-	copy := &ChainHandler{Middlewares:c.Middlewares, Endpoint:c.Endpoint, Context: rctx, request:r, Writer:ResponseWriter(w)}
+	copy := &ChainHandler{Middlewares: c.Middlewares, Endpoint: c.Endpoint, Context: rctx, request: r, Writer: ResponseWriter(w)}
 	copy.Next()
 }
 

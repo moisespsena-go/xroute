@@ -2,8 +2,10 @@ package route
 
 import (
 	"fmt"
-	"github.com/moisespsena/go-topsort"
 	"strings"
+	"sync"
+
+	"github.com/moisespsena/go-topsort"
 )
 
 const DUPLICATION_OVERRIDE = 0
@@ -36,6 +38,8 @@ type MiddlewaresStack struct {
 	Items           Middlewares
 	Anonymous       Middlewares
 	acceptAnonymous bool
+	Len             int
+	mu              sync.Mutex
 }
 
 func NewMiddlewaresStack(name string, acceptAnonymous bool) *MiddlewaresStack {
@@ -65,7 +69,19 @@ func (stack *MiddlewaresStack) Copy() *MiddlewaresStack {
 		Items:           items,
 		Anonymous:       anonymous,
 		acceptAnonymous: stack.acceptAnonymous,
+		Len:             stack.Len,
 	}
+}
+
+func (stack *MiddlewaresStack) All() (items []*Middleware) {
+	if stack.Items != nil {
+		return stack.Items
+	}
+	items = append(items, stack.Anonymous...)
+	for _, md := range stack.ByName {
+		items = append(items, md)
+	}
+	return
 }
 
 func (stack *MiddlewaresStack) Override(items Middlewares, option int) *MiddlewaresStack {
@@ -98,6 +114,7 @@ func (stack *MiddlewaresStack) Add(items Middlewares, option int) *MiddlewaresSt
 		if md.Name == "" {
 			if stack.acceptAnonymous {
 				stack.Anonymous = append(stack.Anonymous, md)
+				stack.Len++
 			} else {
 				panic(fmt.Errorf("%v[%v]: Name is empty.", stack.Name, i))
 			}
@@ -114,12 +131,20 @@ func (stack *MiddlewaresStack) Add(items Middlewares, option int) *MiddlewaresSt
 				}
 			}
 			stack.ByName[md.Name] = md
+			stack.Len++
 		}
 	}
 	return stack
 }
 
 func (stack *MiddlewaresStack) Build() *MiddlewaresStack {
+	if len(stack.Items) == stack.Len {
+		return stack
+	}
+
+	stack.mu.Lock()
+	defer stack.mu.Unlock()
+
 	notFound := make(map[string][]string)
 
 	graph := topsort.NewGraph()

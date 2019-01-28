@@ -3,6 +3,7 @@ package route
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -99,7 +100,20 @@ func TestMuxBasic(t *testing.T) {
 	m.Head("/ping", headPing)
 	m.Post("/ping", createPing)
 	m.Get("/ping/{id}", pingWoop)
-	m.Get("/ping/{id}", pingOne) // expected to overwrite to pingOne handler
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if r != ErrDuplicateHandler {
+					panic(r)
+				}
+			} else {
+				panic(errors.New("Duplicate handler expected"))
+			}
+		}()
+		m.Get("/ping/{id}", pingOne) // expected to duplicate error
+	}()
+	m.Override = true
+	m.Get("/ping/{id}", pingOne) // expected to override
 	m.Get("/ping/{iidd}/woop", pingWoop)
 	m.HandleFunc("/admin/*", catchAll)
 	// m.Post("/admin/*", catchAll)
@@ -256,38 +270,33 @@ func TestMuxEmptyRoutes(t *testing.T) {
 	mux := NewRouter()
 
 	apiRouter := NewRouter()
+	nf := "404 page not found\n"
 	// oops, we forgot to declare any route handlers
 
 	mux.Handle("/api*", apiRouter)
 
-	if _, body := testHandler(t, mux, "GET", "/", nil); body != "404 page not found\n" {
+	if _, body := testHandler(t, mux, "GET", "/", nil); body != nf {
 		t.Fatalf(body)
 	}
 
 	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				if r != `chi: attempting to route to a mux with no handlers.` {
-					t.Fatalf("expecting empty route panic")
-				}
-			}
-		}()
-
-		_, body := testHandler(t, mux, "GET", "/api", nil)
-		t.Fatalf("oops, we are expecting a panic instead of getting resp: %s", body)
+		if _, body := testHandler(t, mux, "GET", "/api", nil); body != nf {
+			t.Fatalf("oops, we are expecting not found instead of getting resp: %s", body)
+		}
 	}()
 
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				if r != `chi: attempting to route to a mux with no handlers.` {
+				if r != ErrNoHandlers {
 					t.Fatalf("expecting empty route panic")
 				}
 			}
 		}()
 
-		_, body := testHandler(t, mux, "GET", "/api/abc", nil)
-		t.Fatalf("oops, we are expecting a panic instead of getting resp: %s", body)
+		if _, body := testHandler(t, mux, "GET", "/api/abc", nil); body != nf {
+			t.Fatalf("oops, we are expecting not found instead of getting resp: %s", body)
+		}
 	}()
 }
 
@@ -295,6 +304,7 @@ func TestMuxEmptyRoutes(t *testing.T) {
 // for an example of using a middleware to handle trailing slashes.
 func TestMuxTrailingSlash(t *testing.T) {
 	r := NewRouter()
+	r.Override = true
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
 		w.Write([]byte("nothing here"))
@@ -1223,26 +1233,6 @@ func TestNestedGroups(t *testing.T) {
 	}
 }
 
-func TestMiddlewarePanicOnLateUse(t *testing.T) {
-	handler := func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("hello\n"))
-	}
-
-	mw := func(next *ChainHandler) {
-		next.Next()
-	}
-
-	defer func() {
-		if recover() == nil {
-			t.Error("expected panic()")
-		}
-	}()
-
-	r := NewRouter()
-	r.Get("/", handler)
-	r.Use(mw) // Too late to apply middleware, we're expecting panic().
-}
-
 func TestMountingExistingPath(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {}
 
@@ -1444,8 +1434,8 @@ func TestServerBaseContext(t *testing.T) {
 }
 
 func TestRouteArg(t *testing.T) {
-	handler := func(w http.ResponseWriter, r *http.Request, ctx *RouteContext) {
-		w.Write([]byte(ctx.Router().Arg().(string)))
+	handler := func(w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
+		w.Write([]byte(rctx.Router().Arg().(string)))
 	}
 
 	arg := "the arg"
@@ -1472,8 +1462,8 @@ func TestRouteArg(t *testing.T) {
 }
 
 func TestRouteArgCustom(t *testing.T) {
-	handler := func(w http.ResponseWriter, r *http.Request, arg *RouteContext) {
-		w.Write([]byte(arg.Data["@"].(string)))
+	handler := func(w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
+		w.Write([]byte(rctx.Data["@"].(string)))
 	}
 
 	sub := NewMux()
@@ -1481,9 +1471,9 @@ func TestRouteArgCustom(t *testing.T) {
 
 	arg := "the arg"
 	r := NewRouter()
-	r.SetRouteHandler(func(handler ContextHandler, w http.ResponseWriter, r *http.Request, arg *RouteContext) {
-		arg.Data["@"] = arg
-		handler.ServeHTTPContext(w, r, arg)
+	r.SetRouteHandler(func(handler ContextHandler, w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
+		rctx.Data["@"] = arg
+		handler.ServeHTTPContext(w, r, rctx)
 	})
 	r.Get("/", handler)
 	r.Mount("/Sub", sub)
@@ -1496,6 +1486,36 @@ func TestRouteArgCustom(t *testing.T) {
 	}
 
 	if _, body := testRequest(t, ts, "GET", "/Sub", nil); body != arg {
+		t.Fatalf(body)
+	}
+}
+
+
+func TestRouteApi(t *testing.T) {
+	index := func(w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
+		w.Write([]byte("index"))
+	}
+	show := func(w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
+		w.Write([]byte("post " + rctx.URLParam("id")))
+	}
+
+	posts := NewMux()
+	posts.Api(func(r Router) {
+		r.Get("/{id:\\d+}", show)
+		r.Get("/", index)
+	})
+
+	r := NewRouter()
+	r.Mount("/a/posts", posts)
+
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	if _, body := testRequest(t, ts, "GET", "/a/posts.json", nil); body != "index" {
+		t.Fatalf(body)
+	}
+
+	if _, body := testRequest(t, ts, "GET", "/a/posts/199.json", nil); body != "post 199" {
 		t.Fatalf(body)
 	}
 }

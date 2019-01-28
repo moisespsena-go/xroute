@@ -7,57 +7,69 @@ package route
 import (
 	"fmt"
 	"math"
+	"net/http"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-type methodTyp int
+type MethodType int
 
-const (
-	mSTUB methodTyp = 1 << iota
-	mCONNECT
-	mDELETE
-	mGET
-	mHEAD
-	mOPTIONS
-	mPATCH
-	mPOST
-	mPUT
-	mTRACE
-)
-
-var mALL methodTyp = mCONNECT | mDELETE | mGET | mHEAD |
-	mOPTIONS | mPATCH | mPOST | mPUT | mTRACE
-
-var methodMap = map[string]methodTyp{
-	"CONNECT": mCONNECT,
-	"DELETE":  mDELETE,
-	"GET":     mGET,
-	"HEAD":    mHEAD,
-	"OPTIONS": mOPTIONS,
-	"PATCH":   mPATCH,
-	"POST":    mPOST,
-	"PUT":     mPUT,
-	"TRACE":   mTRACE,
+func (mt MethodType) String() string {
+	for v, m := range methodMap {
+		if m == mt {
+			return v
+		}
+	}
+	return ""
 }
 
-func RegisterMethod(method string) {
+const (
+	STUB MethodType = 1 << iota
+	CONNECT
+	DELETE
+	GET
+	HEAD
+	OPTIONS
+	PATCH
+	POST
+	PUT
+	TRACE
+)
+
+var ALL = CONNECT | DELETE | GET | HEAD |
+	OPTIONS | PATCH | POST | PUT | TRACE
+
+var methodMap = map[string]MethodType{
+	"CONNECT": CONNECT,
+	"DELETE":  DELETE,
+	"GET":     GET,
+	"HEAD":    HEAD,
+	"OPTIONS": OPTIONS,
+	"PATCH":   PATCH,
+	"POST":    POST,
+	"PUT":     PUT,
+	"TRACE":   TRACE,
+}
+
+func RegisterMethod(method string) MethodType {
 	if method == "" {
-		return
+		return -1
 	}
 	method = strings.ToUpper(method)
-	if _, ok := methodMap[method]; ok {
-		return
+	if m, ok := methodMap[method]; ok {
+		return m
 	}
 	n := len(methodMap)
 	if n > strconv.IntSize {
 		panic(fmt.Sprintf("chi: max number of methods reached (%d)", strconv.IntSize))
 	}
-	mt := methodTyp(math.Exp2(float64(n)))
+	mt := MethodType(math.Exp2(float64(n)))
 	methodMap[method] = mt
-	mALL |= mt
+	ALL |= mt
+	return mt
 }
 
 type nodeTyp uint8
@@ -98,22 +110,94 @@ type node struct {
 	suffix string
 }
 
+type endpointHeadersHandler struct {
+	headers http.Header
+
+	// endpoint handler
+	handler ContextHandler
+}
+
 // endpoints is a mapping of http method constants to handlers
 // for a given route.
-type endpoints map[methodTyp]*endpoint
+type endpoints map[MethodType]*endpoint
 
 type endpoint struct {
 	// endpoint handler
-	handler ContextHandler
+	handler *EndpointHandler
 
 	// pattern is the routing pattern for handler nodes
 	pattern string
 
 	// parameter keys recorded on handler nodes
 	paramKeys []string
+
+	// handlers
+	handlers []*endpointHeadersHandler
 }
 
-func (s endpoints) Value(method methodTyp) *endpoint {
+func (ep *endpoint) add(override bool, headers http.Header, handler ContextHandler) {
+	if h := ep.find(headers); h != nil {
+		if reflect.DeepEqual(headers, h.headers) {
+			if override {
+				h.handler = handler
+				return
+			}
+			panic(ErrDuplicateHandler)
+		}
+	}
+	ep.handlers = append(ep.handlers, &endpointHeadersHandler{headers, handler})
+	if ep.handler == nil {
+		ep.handler = &EndpointHandler{ep}
+	}
+}
+
+func (ep *endpoint) HasHandler() bool {
+	return len(ep.handlers) > 0
+}
+
+func (ep *endpoint) Handler(headers ...http.Header) ContextHandler {
+	if len(headers) > 0 {
+		if h := ep.find(headers[0]); h != nil {
+			return h.handler
+		}
+		return nil
+	}
+	return ep.handler
+}
+
+func (ep *endpoint) find(headers http.Header) *endpointHeadersHandler {
+	var match []*endpointHeadersHandler
+
+main:
+	for _, ehh := range ep.handlers {
+		if ehh.headers != nil {
+			for hn, hvs := range ehh.headers {
+				var ok bool
+				for _, hv := range hvs {
+					if headers.Get(hn) == hv {
+						ok = true
+						break
+					}
+				}
+				if !ok {
+					continue main
+				}
+			}
+		}
+		match = append(match, ehh)
+	}
+
+	if match != nil {
+		sort.Slice(match, func(i, j int) bool {
+			return len(match[i].headers) > len(match[j].headers)
+		})
+		return match[0]
+	}
+
+	return nil
+}
+
+func (s endpoints) Value(method MethodType) *endpoint {
 	mh, ok := s[method]
 	if !ok {
 		mh = &endpoint{}
@@ -122,7 +206,7 @@ func (s endpoints) Value(method methodTyp) *endpoint {
 	return mh
 }
 
-func (n *node) GetRoute(method methodTyp, pattern string) ContextHandler {
+func (n *node) GetRoute(method MethodType, pattern string) *EndpointHandler {
 	search := pattern
 
 	for {
@@ -179,11 +263,14 @@ func (n *node) GetRoute(method methodTyp, pattern string) ContextHandler {
 	}
 }
 
-func (n *node) InsertRoute(method methodTyp, pattern string, handler ContextHandler) *node {
-	return n.InsertRouteCb(method, pattern, handler, func(n *node) {})
+func (n *node) InsertRoute(override bool, method MethodType, pattern string, handler ContextHandler, headers ...http.Header) *node {
+	if len(headers) == 0 {
+		headers = []http.Header{nil}
+	}
+	return n.InsertRouteCb(override, method, pattern, headers[0], handler, func(n *node) {})
 }
 
-func (n *node) InsertRouteCb(method methodTyp, pattern string, handler ContextHandler, cb func(n *node)) *node {
+func (n *node) InsertRouteCb(override bool, method MethodType, pattern string, headers http.Header, handler ContextHandler, cb func(n *node)) *node {
 	var parent *node
 	search := pattern
 
@@ -191,7 +278,7 @@ func (n *node) InsertRouteCb(method methodTyp, pattern string, handler ContextHa
 		// Handle key exhaustion
 		if len(search) == 0 {
 			// Insert or update the node's leaf handler
-			n.setEndpoint(method, handler, pattern)
+			n.setEndpoint(override, method, headers, handler, pattern)
 			return n
 		}
 
@@ -220,7 +307,7 @@ func (n *node) InsertRouteCb(method methodTyp, pattern string, handler ContextHa
 			child := &node{label: label, tail: segTail, prefix: search}
 			hn := parent.addChildCb(child, search, cb)
 
-			hn.setEndpoint(method, handler, pattern)
+			hn.setEndpoint(override, method, headers, handler, pattern)
 			return hn
 		}
 
@@ -259,7 +346,7 @@ func (n *node) InsertRouteCb(method methodTyp, pattern string, handler ContextHa
 		// If the new key is a subset, set the method/handler on this node and finish.
 		search = search[commonPrefix:]
 		if len(search) == 0 {
-			child.setEndpoint(method, handler, pattern)
+			child.setEndpoint(override, method, headers, handler, pattern)
 			return child
 		}
 
@@ -270,7 +357,7 @@ func (n *node) InsertRouteCb(method methodTyp, pattern string, handler ContextHa
 			prefix: search,
 		}
 		hn := child.addChildCb(subchild, search, cb)
-		hn.setEndpoint(method, handler, pattern)
+		hn.setEndpoint(override, method, headers, handler, pattern)
 		return hn
 	}
 }
@@ -391,7 +478,7 @@ func (n *node) getEdge(ntyp nodeTyp, label, tail byte, prefix string) *node {
 	return nil
 }
 
-func (n *node) setEndpoint(method methodTyp, handler ContextHandler, pattern string) {
+func (n *node) setEndpoint(override bool, method MethodType, headers http.Header, handler ContextHandler, pattern string) {
 	// Set the handler for the method type on the node
 	if n.endpoints == nil {
 		n.endpoints = make(endpoints, 0)
@@ -399,29 +486,27 @@ func (n *node) setEndpoint(method methodTyp, handler ContextHandler, pattern str
 
 	paramKeys := patParamKeys(pattern)
 
-	if method&mSTUB == mSTUB {
-		n.endpoints.Value(mSTUB).handler = handler
+	if method&STUB == STUB {
+		n.endpoints.Value(STUB).add(override, headers, handler)
 	}
-	if method&mALL == mALL {
-		h := n.endpoints.Value(mALL)
-		h.handler = handler
+
+	set := func(h *endpoint) {
 		h.pattern = pattern
 		h.paramKeys = paramKeys
+		h.add(override, headers, handler)
+	}
+
+	if method&ALL == ALL {
+		set(n.endpoints.Value(ALL))
 		for _, m := range methodMap {
-			h := n.endpoints.Value(m)
-			h.handler = handler
-			h.pattern = pattern
-			h.paramKeys = paramKeys
+			set(n.endpoints.Value(m))
 		}
 	} else {
-		h := n.endpoints.Value(method)
-		h.handler = handler
-		h.pattern = pattern
-		h.paramKeys = paramKeys
+		set(n.endpoints.Value(method))
 	}
 }
 
-func (n *node) FindRoute(rctx *RouteContext, method methodTyp, path string) (*node, endpoints, ContextHandler) {
+func (n *node) FindRoute(rctx *RouteContext, method MethodType, path string, header ...http.Header) (*node, endpoints, ContextHandler) {
 	// Reset the context routing pattern and params
 	rctx.routePattern = ""
 	rctx.routeParams.Keys = rctx.routeParams.Keys[:0]
@@ -444,12 +529,12 @@ func (n *node) FindRoute(rctx *RouteContext, method methodTyp, path string) (*no
 		rctx.RoutePatterns = append(rctx.RoutePatterns, rctx.routePattern)
 	}
 
-	return rn, rn.endpoints, rn.endpoints[method].handler
+	return rn, rn.endpoints, rn.endpoints[method].Handler(header...)
 }
 
 // Recursive edge traversal by checking all nodeTyp groups along the way.
 // It's like searching through a multi-dimensional radix trie.
-func (n *node) findRoute(rctx *RouteContext, method methodTyp, path string) *node {
+func (n *node) findRoute(rctx *RouteContext, method MethodType, path string) *node {
 	nn := n
 	search := path
 
@@ -645,7 +730,7 @@ func (n *node) routes() []Route {
 	rts := []Route{}
 
 	n.walk(func(eps endpoints, subroutes Routes) bool {
-		if eps[mSTUB] != nil && eps[mSTUB].handler != nil && subroutes == nil {
+		if eps[STUB] != nil && eps[STUB].handler != nil && subroutes == nil {
 			return false
 		}
 
@@ -666,8 +751,8 @@ func (n *node) routes() []Route {
 
 		for p, mh := range pats {
 			hs := make(map[string]ContextHandler, 0)
-			if mh[mALL] != nil && mh[mALL].handler != nil {
-				hs["*"] = mh[mALL].handler
+			if mh[ALL] != nil && mh[ALL].handler != nil {
+				hs["*"] = mh[ALL].handler
 			}
 
 			for mt, h := range mh {
@@ -812,7 +897,7 @@ func longestPrefix(k1, k2 string) int {
 	return i
 }
 
-func methodTypString(method methodTyp) string {
+func methodTypString(method MethodType) string {
 	for s, t := range methodMap {
 		if method == t {
 			return s

@@ -29,13 +29,15 @@
 //
 package route
 
+import "net/http"
+
 // NewRouter returns a new Mux object that implements the Router interface.
 func NewRouter() *Mux {
 	return NewMux()
 }
 
 type HandlerFinder interface {
-	FindHandler(method, path string) ContextHandler
+	FindHandler(method, path string, header ...http.Header) ContextHandler
 }
 
 // Router consisting of the core routing methods used by chi's Mux,
@@ -89,6 +91,10 @@ type Router interface {
 	// the `method` HTTP method.
 	Method(method, pattern string, h interface{})
 
+	// MethodT adds the route `pattern` that matches `method` http method to
+	// execute the `handler` Handler.
+	MethodT(method MethodType, pattern string, handler interface{})
+
 	// HTTP-method routing along `pattern`
 	Connect(pattern string, h interface{})
 	Delete(pattern string, h interface{})
@@ -99,6 +105,9 @@ type Router interface {
 	Post(pattern string, h interface{})
 	Put(pattern string, h interface{})
 	Trace(pattern string, h interface{})
+
+	Headers(headers http.Header, f func(r Router))
+	Api(f func(r Router))
 
 	// NotFound defines a handler to respond whenever a route could
 	// not be found.

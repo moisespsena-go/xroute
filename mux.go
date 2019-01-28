@@ -13,7 +13,9 @@ import (
 	"time"
 )
 
-var _ Router = &Mux{}
+var (
+	_ Router = &Mux{}
+)
 
 type ErrorHandler func(url *url.URL, debug bool, w ResponseWriterWithStatus, r *http.Request, context *RouteContext, begin time.Time, err interface{})
 
@@ -73,7 +75,10 @@ type Mux struct {
 	interseptErrors         bool
 	debug                   bool
 	api                     bool
+	headers                 http.Header
 	ApiExtensions           []string
+
+	Override bool
 }
 
 var LogRequestIgnore, _ = regexp.Compile("\\.(css|js|jpg|png|ico|ttf|woff2?)$")
@@ -84,7 +89,7 @@ func DefaultLogRequestsHandler(url *url.URL, w ResponseWriterWithStatus, r *http
 		if context.RouteMethod != method {
 			method += " -> " + context.RouteMethod
 		}
-		fmt.Printf("Finish [%s] %d %v Took %.2fms\n", method, w.Status(), url, time.Now().Sub(begin).Seconds()*1000)
+		context.Log.Debugf("Finish [%s] %d %v Took %.2fms", method, w.Status(), url, time.Now().Sub(begin).Seconds()*1000)
 	}
 }
 
@@ -130,7 +135,7 @@ func NewMux(name ...string) *Mux {
 		handlerInterseptors: NewMiddlewaresStack("HandlerInterseptors", false),
 		interseptors:        NewMiddlewaresStack("Interseptors", false),
 		middlewares:         NewMiddlewaresStack("Middlewares", true),
-		ApiExtensions:       []string{"json", "xml"},
+		ApiExtensions:       []string{"json"},
 	}
 
 	if len(name) > 0 {
@@ -254,7 +259,7 @@ func (mx *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
-	url := GetOriginalUrl(r)
+	url := GetOriginalURL(r)
 	if url == nil {
 		urlCopy := *r.URL
 		url = &urlCopy
@@ -263,7 +268,11 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 		r, rctx = GetOrNewRouteContextForRequest(r)
 	}
 
-	defer rctx.with(mx)
+	if rctx.Log == nil {
+		rctx.Log = RequestLoggerFactory(r, rctx)
+	}
+
+	defer rctx.with(mx)()
 
 	ws := ResponseWriter(w)
 	w = ws
@@ -306,7 +315,7 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 		if !mx.inline && mx.handler == nil {
 			mx.buildRouteHandler()
 		} else {
-			panic("chi: attempting to route to a mux with no handlers.")
+			panic(ErrNoHandlers)
 		}
 	}
 
@@ -368,13 +377,13 @@ func (mx *Mux) Use(middlewares ...interface{}) {
 // Handle adds the route `pattern` that matches any http method to
 // execute the `handler` Handler.
 func (mx *Mux) Handle(pattern string, handler interface{}) {
-	mx.handle(mALL, pattern, handler)
+	mx.handle(ALL, pattern, handler)
 }
 
 // HandleFunc adds the route `pattern` that matches any http method to
 // execute the `handler` HandlerFunc.
 func (mx *Mux) HandleFunc(pattern string, handler interface{}) {
-	mx.handle(mALL, pattern, handler)
+	mx.handle(ALL, pattern, handler)
 }
 
 // Method adds the route `pattern` that matches `method` http method to
@@ -387,58 +396,68 @@ func (mx *Mux) Method(method, pattern string, handler interface{}) {
 	mx.handle(m, pattern, handler)
 }
 
+// HandleMethod adds the route `pattern` that matches `method` http method to
+// execute the `handler` Handler.
+func (mx *Mux) MethodT(method MethodType, pattern string, handler interface{}) {
+	for _, m := range methodMap {
+		if (method & m) != 0 {
+			mx.handle(m, pattern, handler)
+		}
+	}
+}
+
 // Connect adds the route `pattern` that matches a CONNECT http method to
 // execute the `handler` Handler.
 func (mx *Mux) Connect(pattern string, handler interface{}) {
-	mx.handle(mCONNECT, pattern, handler)
+	mx.handle(CONNECT, pattern, handler)
 }
 
 // Delete adds the route `pattern` that matches a DELETE http method to
 // execute the `handler` Handler.
 func (mx *Mux) Delete(pattern string, handler interface{}) {
-	mx.handle(mDELETE, pattern, handler)
+	mx.handle(DELETE, pattern, handler)
 }
 
 // Get adds the route `pattern` that matches a GET http method to
 // execute the `handler` Handler.
 func (mx *Mux) Get(pattern string, handler interface{}) {
-	mx.handle(mGET, pattern, handler)
+	mx.handle(GET, pattern, handler)
 }
 
 // Head adds the route `pattern` that matches a HEAD http method to
 // execute the `handler` Handler.
 func (mx *Mux) Head(pattern string, handler interface{}) {
-	mx.handle(mHEAD, pattern, handler)
+	mx.handle(HEAD, pattern, handler)
 }
 
 // Options adds the route `pattern` that matches a OPTIONS http method to
 // execute the `handler` Handler.
 func (mx *Mux) Options(pattern string, handler interface{}) {
-	mx.handle(mOPTIONS, pattern, handler)
+	mx.handle(OPTIONS, pattern, handler)
 }
 
 // Patch adds the route `pattern` that matches a PATCH http method to
 // execute the `handler` Handler.
 func (mx *Mux) Patch(pattern string, handler interface{}) {
-	mx.handle(mPATCH, pattern, handler)
+	mx.handle(PATCH, pattern, handler)
 }
 
 // Post adds the route `pattern` that matches a POST http method to
 // execute the `handler` Handler.
 func (mx *Mux) Post(pattern string, handler interface{}) {
-	mx.handle(mPOST, pattern, handler)
+	mx.handle(POST, pattern, handler)
 }
 
 // Put adds the route `pattern` that matches a PUT http method to
 // execute the `handler` Handler.
 func (mx *Mux) Put(pattern string, handler interface{}) {
-	mx.handle(mPUT, pattern, handler)
+	mx.handle(PUT, pattern, handler)
 }
 
 // Trace adds the route `pattern` that matches a TRACE http method to
 // execute the `handler` Handler.
 func (mx *Mux) Trace(pattern string, handler interface{}) {
-	mx.handle(mTRACE, pattern, handler)
+	mx.handle(TRACE, pattern, handler)
 }
 
 // NotFound sets a custom Handler for routing paths that could
@@ -590,15 +609,15 @@ func (mx *Mux) Mount(pattern string, handler interface{}) {
 			mx.NotFoundHandler().ServeHTTPContext(w, r, arg)
 		})
 
-		mx.handle(mALL|mSTUB, pattern, mh)
-		mx.handle(mALL|mSTUB, pattern+"/", notFoundHandler)
+		mx.handle(ALL|STUB, pattern, mh)
+		mx.handle(ALL|STUB, pattern+"/", notFoundHandler)
 		pattern += "/"
 	}
 
-	method := mALL
+	method := ALL
 	subroutes, _ := handler.(Routes)
 	if subroutes != nil {
-		method |= mSTUB
+		method |= STUB
 	}
 
 	for _, n := range mx.handle(method, pattern+"*", mh) {
@@ -678,7 +697,9 @@ func (mx *Mux) buildRouteHandler() {
 		var minterseptors []Middlewares
 		p := mx
 		for p != nil {
-			minterseptors = append(minterseptors, p.handlerInterseptors.Items)
+			if p.handlerInterseptors.Len > 0 {
+				minterseptors = append(minterseptors, p.handlerInterseptors.All())
+			}
 			p = p.parent
 		}
 
@@ -695,10 +716,10 @@ func (mx *Mux) buildRouteHandler() {
 }
 
 func (mx *Mux) chainHandler(h interface{}) Handler {
-	return Chain(append(mx.interseptors.Items, mx.middlewares.Items...)...).Handler(h)
+	return Chain(append(append(Middlewares{}, mx.interseptors.Build().Items...), mx.middlewares.Build().Items...)...).Handler(h)
 }
 
-func (mx *Mux) Api(f func(router *Mux)) {
+func (mx *Mux) Api(f func(r Router)) {
 	old := mx.api
 	defer func() {
 		mx.api = old
@@ -706,10 +727,18 @@ func (mx *Mux) Api(f func(router *Mux)) {
 	mx.api = true
 	f(mx)
 }
+func (mx *Mux) Headers(headers http.Header, f func(r Router)) {
+	old := mx.headers
+	defer func() {
+		mx.headers = old
+	}()
+	mx.headers = headers
+	f(mx)
+}
 
 // handle registers a http.Handler in the routing tree for a particular http method
 // and routing pattern.
-func (mx *Mux) handle(method methodTyp, pattern string, handler interface{}) (nodes []*node) {
+func (mx *Mux) handle(method MethodType, pattern string, handler interface{}) (nodes []*node) {
 	if len(pattern) == 0 || pattern[0] != '/' {
 		panic(fmt.Sprintf("chi: routing pattern must begin with '/' in '%s'", pattern))
 	}
@@ -724,25 +753,30 @@ func (mx *Mux) handle(method methodTyp, pattern string, handler interface{}) (no
 
 	// Add the endpoint to the tree and return the node
 	if mx.api {
-		for _, ext := range mx.ApiExtensions {
-			node := mx.tree.InsertRoute(method, pattern+"."+ext, h)
-			node.suffix = "."+ext
-			nodes = append(nodes, node)
+		if pattern == "/" {
+			for _, ext := range mx.ApiExtensions {
+				nodes = append(nodes, mx.tree.InsertRoute(mx.Override, method, "/."+ext, h, mx.headers))
+			}
+		} else {
+			for _, ext := range mx.ApiExtensions {
+				nodes = append(nodes, mx.tree.InsertRoute(mx.Override, method, pattern+"."+ext, h, mx.headers))
+			}
 		}
 	}
-	nodes = append(nodes, mx.tree.InsertRoute(method, pattern, h))
+	nodes = append(nodes, mx.tree.InsertRoute(mx.Override, method, pattern, h, mx.headers))
 	return
 }
 
-func (mx *Mux) FindHandler(method, path string) ContextHandler {
+func (mx *Mux) FindHandler(method, path string, header ...http.Header) (ContextHandler) {
 	if h := mx.tree.GetRoute(methodMap[method], path); h != nil {
-		if mh, ok := h.(*MountHandler); ok {
-			if finder, ok := mh.Handler.(HandlerFinder); ok {
-				return finder.FindHandler(path, method)
+		if h := h.Handler(header...); h != nil {
+			if mh, ok := h.(*MountHandler); ok {
+				if finder, ok := mh.Handler.(HandlerFinder); ok {
+					return finder.FindHandler(path, method)
+				}
+				return mh
 			}
-			return mh
 		}
-		return h
 	}
 	return nil
 }
@@ -774,9 +808,11 @@ func (mx *Mux) routeHTTP(w http.ResponseWriter, r *http.Request, rctx *RouteCont
 	if _, _, h := mx.tree.FindRoute(rctx, method, routePath); h != nil {
 		if mh, ok := h.(*MountHandler); ok {
 			mh.handler(w, r, rctx)
-		} else {
+		} else if len(mx.handlerInterseptors.Items) > 0 {
 			handlerChain := Chain(mx.handlerInterseptors.Items...).Handler(h)
 			handlerChain.ServeHTTPContext(w, r, rctx)
+		} else {
+			h.ServeHTTPContext(w, r, rctx)
 		}
 		return
 	}
@@ -786,6 +822,7 @@ func (mx *Mux) routeHTTP(w http.ResponseWriter, r *http.Request, rctx *RouteCont
 			routePath = routePath[0:pos] + "/." + ext
 			// Find the route for api
 			if _, _, h := mx.tree.FindRoute(rctx, method, routePath); h != nil {
+				rctx.ApiExt = ext
 				if mh, ok := h.(*MountHandler); ok {
 					mh.handler(w, r, rctx)
 				} else {
@@ -822,6 +859,16 @@ func (mx *Mux) updateSubRoutes(fn func(subMux *Mux)) {
 		}
 		fn(subMux)
 	}
+}
+
+func (mx *Mux) Overriden(f func(r Router)) {
+	if mx.Override {
+		f(mx)
+		return
+	}
+	mx.Override = true
+	defer func() { mx.Override = false }()
+	f(mx)
 }
 
 // methodNotAllowedHandler is a helper function to respond with a 405,
