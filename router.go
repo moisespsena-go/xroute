@@ -27,7 +27,7 @@
 //
 // See github.com/go-chi/chi/_examples/ for more in-depth examples.
 //
-package route
+package xroute
 
 import "net/http"
 
@@ -116,6 +116,8 @@ type Router interface {
 	// MethodNotAllowed defines a handler to respond whenever a method is
 	// not allowed.
 	MethodNotAllowed(h interface{})
+
+	Overrides(f func(r Router))
 }
 
 // Routes interface adds two methods for router traversal, which is also

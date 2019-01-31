@@ -1,4 +1,4 @@
-package route
+package xroute
 
 import (
 	"context"
@@ -78,7 +78,7 @@ type Mux struct {
 	headers                 http.Header
 	ApiExtensions           []string
 
-	Override bool
+	overrides bool
 }
 
 var LogRequestIgnore, _ = regexp.Compile("\\.(css|js|jpg|png|ico|ttf|woff2?)$")
@@ -755,19 +755,19 @@ func (mx *Mux) handle(method MethodType, pattern string, handler interface{}) (n
 	if mx.api {
 		if pattern == "/" {
 			for _, ext := range mx.ApiExtensions {
-				nodes = append(nodes, mx.tree.InsertRoute(mx.Override, method, "/."+ext, h, mx.headers))
+				nodes = append(nodes, mx.tree.InsertRoute(mx.overrides, method, "/."+ext, h, mx.headers))
 			}
 		} else {
 			for _, ext := range mx.ApiExtensions {
-				nodes = append(nodes, mx.tree.InsertRoute(mx.Override, method, pattern+"."+ext, h, mx.headers))
+				nodes = append(nodes, mx.tree.InsertRoute(mx.overrides, method, pattern+"."+ext, h, mx.headers))
 			}
 		}
 	}
-	nodes = append(nodes, mx.tree.InsertRoute(mx.Override, method, pattern, h, mx.headers))
+	nodes = append(nodes, mx.tree.InsertRoute(mx.overrides, method, pattern, h, mx.headers))
 	return
 }
 
-func (mx *Mux) FindHandler(method, path string, header ...http.Header) (ContextHandler) {
+func (mx *Mux) FindHandler(method, path string, header ...http.Header) ContextHandler {
 	if h := mx.tree.GetRoute(methodMap[method], path); h != nil {
 		if h := h.Handler(header...); h != nil {
 			if mh, ok := h.(*MountHandler); ok {
@@ -861,13 +861,13 @@ func (mx *Mux) updateSubRoutes(fn func(subMux *Mux)) {
 	}
 }
 
-func (mx *Mux) Overriden(f func(r Router)) {
-	if mx.Override {
+func (mx *Mux) Overrides(f func(r Router)) {
+	if mx.overrides {
 		f(mx)
 		return
 	}
-	mx.Override = true
-	defer func() { mx.Override = false }()
+	mx.overrides = true
+	defer func() { mx.overrides = false }()
 	f(mx)
 }
 

@@ -1,4 +1,4 @@
-package route
+package xroute
 
 import (
 	"bytes"
@@ -112,7 +112,7 @@ func TestMuxBasic(t *testing.T) {
 		}()
 		m.Get("/ping/{id}", pingOne) // expected to duplicate error
 	}()
-	m.Override = true
+	m.overrides = true
 	m.Get("/ping/{id}", pingOne) // expected to override
 	m.Get("/ping/{iidd}/woop", pingWoop)
 	m.HandleFunc("/admin/*", catchAll)
@@ -304,7 +304,7 @@ func TestMuxEmptyRoutes(t *testing.T) {
 // for an example of using a middleware to handle trailing slashes.
 func TestMuxTrailingSlash(t *testing.T) {
 	r := NewRouter()
-	r.Override = true
+	r.overrides = true
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
 		w.Write([]byte("nothing here"))
