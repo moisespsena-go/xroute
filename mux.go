@@ -106,13 +106,14 @@ func DefaultErrorHandler(url *url.URL, isdebug bool, w ResponseWriterWithStatus,
 	w.WriteHeader(500)
 	errMessage := []byte(fmt.Sprintf("\nRequest failure: %v\n", err))
 	os.Stderr.Write(errMessage)
+
 	var stack []byte
 	if t, ok := err.(TracedError); ok {
 		stack = append(prepareStack(t.Trace()), []byte("\n")...)
 	} else {
 		stack = prepareStack(debug.Stack())
 	}
-	os.Stderr.Write(errMessage)
+
 	os.Stderr.Write(stack)
 	if isdebug {
 		w.Write(errMessage)
@@ -811,6 +812,13 @@ func (mx *Mux) routeHTTP(w http.ResponseWriter, r *http.Request, rctx *RouteCont
 		} else if len(mx.handlerInterseptors.Items) > 0 {
 			handlerChain := Chain(mx.handlerInterseptors.Items...).Handler(h)
 			handlerChain.ServeHTTPContext(w, r, rctx)
+		} else if eh, ok := h.(*EndpointHandler); ok {
+			if ehh := eh.find(r.Header); ehh == nil {
+				w.WriteHeader(http.StatusBadRequest)
+			} else {
+				rctx.Handler = ehh.handler
+				ehh.handler.ServeHTTPContext(w, r, rctx)
+			}
 		} else {
 			h.ServeHTTPContext(w, r, rctx)
 		}

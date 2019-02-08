@@ -8,9 +8,11 @@ import (
 	"github.com/moisespsena/go-topsort"
 )
 
-const DUPLICATION_OVERRIDE = 0
-const DUPLICATION_ABORT = 1
-const DUPLICATION_SKIP = 2
+const (
+	DUPLICATION_OVERRIDE = 0
+	DUPLICATION_ABORT    = 1
+	DUPLICATION_SKIP     = 2
+)
 
 // Middlewares type is a slice of standard middleware handlers with methods
 // to compose middleware chains and interface{}'s.

@@ -40,6 +40,15 @@ func (c *ChainHandler) ServeHTTPContext(w http.ResponseWriter, r *http.Request, 
 	if rctx == nil {
 		rctx = NewRouteContext()
 	}
+
+	if eh, ok := c.Endpoint.(*EndpointHandler); ok {
+		if ehh := eh.find(r.Header); ehh == nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		} else {
+			c.Endpoint = ehh.handler
+		}
+	}
 	rctx.Handler = c.Endpoint
 	copy := &ChainHandler{Middlewares: c.Middlewares, Endpoint: c.Endpoint, Context: rctx, request: r, Writer: ResponseWriter(w)}
 	copy.Next()

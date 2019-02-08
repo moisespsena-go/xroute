@@ -126,6 +126,9 @@ func (h *RouteInterfaceHandler) ServeHTTPContext(w http.ResponseWriter, r *http.
 
 func HttpHandler(handler interface{}) (h Handler) {
 	if handler != nil {
+		if h, ok := handler.(Handler); ok {
+			return h
+		}
 		if ch, ok := handler.(ContextHandler); ok {
 			h = &HttpContextHandler{ch, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				ch.ServeHTTPContext(w, r, nil)
@@ -164,6 +167,7 @@ func (eh EndpointHandler) ServeHTTPContext(w http.ResponseWriter, r *http.Reques
 	if h := eh.find(r.Header); h == nil {
 		w.WriteHeader(http.StatusBadRequest)
 	} else {
+		rctx.Handler = h
 		h.handler.ServeHTTPContext(w, r, rctx)
 	}
 }
