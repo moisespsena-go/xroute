@@ -1116,7 +1116,7 @@ func TestSingleHandler(t *testing.T) {
 // 	var r Router = NewRouter()
 //
 // 	var r2 Router = NewACLMux() //NewRouter()
-// 	r2.Get("/hi", func(w http.ResponseWriter, r *http.request) {
+// 	r2.Get("/hi", func(w http.NewResponseWriter, r *http.request) {
 // 		w.Write([]byte("hi"))
 // 	})
 //

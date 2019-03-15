@@ -10,7 +10,7 @@ import (
 	"net/http"
 )
 
-type ResponseWriterWithStatus interface {
+type ResponseWriter interface {
 	http.ResponseWriter
 	// Status returns the HTTP status of the request, or 0 if one has not
 	// yet been sent.
@@ -20,38 +20,20 @@ type ResponseWriterWithStatus interface {
 	HasStatus(status ...int) bool
 }
 
-func ResponseWriter(w http.ResponseWriter, status ...int) ResponseWriterWithStatus {
-	if ws, ok := w.(ResponseWriterWithStatus); ok {
+func NewResponseWriter(w http.ResponseWriter, status ...int) ResponseWriter {
+	if ws, ok := w.(ResponseWriter); ok {
 		return ws
 	}
 	if len(status) == 0 {
 		status = []int{0}
 	}
-	return &BasicWriter{ResponseWriter:w}
+	return &BasicWriter{ResponseWriter: w}
 }
 
-type DefaultResponseWriterWithStatus struct {
-	http.ResponseWriter
-	status int
-}
-
-func (w *DefaultResponseWriterWithStatus) Status() int {
-	return w.status
-}
-
-func (w *DefaultResponseWriterWithStatus) IsHeaderSent() bool {
-	return w.status != 0
-}
-
-func (rw *DefaultResponseWriterWithStatus) WriteHeader(statusCode int) {
-	rw.status = statusCode
-	rw.ResponseWriter.WriteHeader(statusCode)
-}
-
-// WrapResponseWriter is a proxy around an http.ResponseWriter that allows you to hook
+// WrapResponseWriter is a proxy around an http.NewResponseWriter that allows you to hook
 // into various parts of the response process.
 type WrapResponseWriter interface {
-	ResponseWriterWithStatus
+	ResponseWriter
 	// Tee causes the response body to be written to the given io.Writer in
 	// addition to proxying the writes through. Only one io.Writer can be
 	// tee'd to at once: setting a second one will overwrite the first.
@@ -63,8 +45,8 @@ type WrapResponseWriter interface {
 	Unwrap() http.ResponseWriter
 }
 
-// BasicWriter wraps a http.ResponseWriter that implements the minimal
-// http.ResponseWriter interface.
+// BasicWriter wraps a http.NewResponseWriter that implements the minimal
+// http.NewResponseWriter interface.
 type BasicWriter struct {
 	http.ResponseWriter
 	wroteHeader bool
@@ -80,6 +62,7 @@ func (b *BasicWriter) WriteHeader(code int) {
 		b.ResponseWriter.WriteHeader(code)
 	}
 }
+
 func (b *BasicWriter) Write(buf []byte) (int, error) {
 	b.WriteHeader(http.StatusOK)
 	n, err := b.ResponseWriter.Write(buf)
@@ -93,14 +76,17 @@ func (b *BasicWriter) Write(buf []byte) (int, error) {
 	b.bytes += n
 	return n, err
 }
+
 func (b *BasicWriter) maybeWriteHeader() {
 	if !b.wroteHeader {
 		b.WriteHeader(http.StatusOK)
 	}
 }
+
 func (b *BasicWriter) Status() int {
 	return b.status
 }
+
 func (b *BasicWriter) HasStatus(status ...int) bool {
 	for _, s := range status {
 		if b.status == s {
@@ -109,12 +95,15 @@ func (b *BasicWriter) HasStatus(status ...int) bool {
 	}
 	return false
 }
+
 func (b *BasicWriter) BytesWritten() int {
 	return b.bytes
 }
+
 func (b *BasicWriter) Tee(w io.Writer) {
 	b.tee = w
 }
+
 func (b *BasicWriter) Unwrap() http.ResponseWriter {
 	return b.ResponseWriter
 }
@@ -132,7 +121,7 @@ var _ http.Flusher = &FlushWriter{}
 
 // HTTPFancyWriter is a HTTP writer that additionally satisfies http.CloseNotifier,
 // http.Flusher, http.Hijacker, and io.ReaderFrom. It exists for the common case
-// of wrapping the http.ResponseWriter that package http gives you, in order to
+// of wrapping the http.NewResponseWriter that package http gives you, in order to
 // make the proxied object support the full method set of the proxied object.
 type HTTPFancyWriter struct {
 	BasicWriter
@@ -142,14 +131,17 @@ func (f *HTTPFancyWriter) CloseNotify() <-chan bool {
 	cn := f.BasicWriter.ResponseWriter.(http.CloseNotifier)
 	return cn.CloseNotify()
 }
+
 func (f *HTTPFancyWriter) Flush() {
 	fl := f.BasicWriter.ResponseWriter.(http.Flusher)
 	fl.Flush()
 }
+
 func (f *HTTPFancyWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	hj := f.BasicWriter.ResponseWriter.(http.Hijacker)
 	return hj.Hijack()
 }
+
 func (f *HTTPFancyWriter) ReadFrom(r io.Reader) (int64, error) {
 	if f.BasicWriter.tee != nil {
 		n, err := io.Copy(&f.BasicWriter, r)
@@ -170,7 +162,7 @@ var _ io.ReaderFrom = &HTTPFancyWriter{}
 
 // HTTP2FancyWriter is a HTTP2 writer that additionally satisfies http.CloseNotifier,
 // http.Flusher, and io.ReaderFrom. It exists for the common case
-// of wrapping the http.ResponseWriter that package http gives you, in order to
+// of wrapping the http.NewResponseWriter that package http gives you, in order to
 // make the proxied object support the full method set of the proxied object.
 type HTTP2FancyWriter struct {
 	BasicWriter
@@ -180,6 +172,7 @@ func (f *HTTP2FancyWriter) CloseNotify() <-chan bool {
 	cn := f.BasicWriter.ResponseWriter.(http.CloseNotifier)
 	return cn.CloseNotify()
 }
+
 func (f *HTTP2FancyWriter) Flush() {
 	fl := f.BasicWriter.ResponseWriter.(http.Flusher)
 	fl.Flush()

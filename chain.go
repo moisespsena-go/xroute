@@ -27,7 +27,7 @@ type ChainHandler struct {
 
 	Index   int
 	request *http.Request
-	Writer  ResponseWriterWithStatus
+	Writer  ResponseWriter
 	Context *RouteContext
 	next    bool
 }
@@ -50,7 +50,7 @@ func (c *ChainHandler) ServeHTTPContext(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	rctx.Handler = c.Endpoint
-	copy := &ChainHandler{Middlewares: c.Middlewares, Endpoint: c.Endpoint, Context: rctx, request: r, Writer: ResponseWriter(w)}
+	copy := &ChainHandler{Middlewares: c.Middlewares, Endpoint: c.Endpoint, Context: rctx, request: r, Writer: NewResponseWriter(w)}
 	copy.Next()
 }
 
@@ -87,10 +87,10 @@ func (c *ChainHandler) Next(values ...interface{}) {
 		switch vt := v.(type) {
 		case *http.Request:
 			c.SetRequest(vt)
-		case ResponseWriterWithStatus:
+		case ResponseWriter:
 			c.Writer = vt
 		case http.ResponseWriter:
-			c.Writer = ResponseWriter(vt)
+			c.Writer = NewResponseWriter(vt)
 		case *RouteContext:
 			c.Context = vt
 		case context.Context:

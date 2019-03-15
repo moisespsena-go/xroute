@@ -17,7 +17,7 @@ var (
 	_ Router = &Mux{}
 )
 
-type ErrorHandler func(url *url.URL, debug bool, w ResponseWriterWithStatus, r *http.Request, context *RouteContext, begin time.Time, err interface{})
+type ErrorHandler func(URL *url.URL, debug bool, w ResponseWriter, r *http.Request, context *RouteContext, begin time.Time, err interface{})
 
 // Mux is a simple HTTP route multiplexer that parses a request path,
 // records any URL params, and executes an end handler. It implements
@@ -71,7 +71,7 @@ type Mux struct {
 	methodNotAllowedHandler ContextHandler
 	buildRouterMutex        sync.Mutex
 	logRequests             bool
-	logRequestHandler       func(url *url.URL, w ResponseWriterWithStatus, r *http.Request, arg *RouteContext, begin time.Time)
+	logRequestHandler       func(URL *url.URL, w ResponseWriter, r *http.Request, arg *RouteContext, begin time.Time)
 	interseptErrors         bool
 	debug                   bool
 	api                     bool
@@ -83,13 +83,13 @@ type Mux struct {
 
 var LogRequestIgnore, _ = regexp.Compile("\\.(css|js|jpg|png|ico|ttf|woff2?)$")
 
-func DefaultLogRequestsHandler(url *url.URL, w ResponseWriterWithStatus, r *http.Request, context *RouteContext, begin time.Time) {
+func DefaultLogRequestsHandler(URL *url.URL, w ResponseWriter, r *http.Request, context *RouteContext, begin time.Time) {
 	if !LogRequestIgnore.MatchString(r.URL.Path) || w.Status() >= 400 {
 		method := r.Method
 		if context.RouteMethod != method {
 			method += " -> " + context.RouteMethod
 		}
-		context.Log.Debugf("Finish [%s] %d %v Took %.2fms", method, w.Status(), url, time.Now().Sub(begin).Seconds()*1000)
+		context.Log.Debugf("Finish [%s] %d %v Took %.2fms", method, w.Status(), URLToString(URL), time.Now().Sub(begin).Seconds()*1000)
 	}
 }
 
@@ -102,7 +102,7 @@ func prepareStack(stack []byte) []byte {
 	return stack
 }
 
-func DefaultErrorHandler(url *url.URL, isdebug bool, w ResponseWriterWithStatus, r *http.Request, context *RouteContext, begin time.Time, err interface{}) {
+func DefaultErrorHandler(URL *url.URL, isdebug bool, w ResponseWriter, r *http.Request, context *RouteContext, begin time.Time, err interface{}) {
 	w.WriteHeader(500)
 	errMessage := []byte(fmt.Sprintf("\nRequest failure: %v\n", err))
 	os.Stderr.Write(errMessage)
@@ -125,7 +125,7 @@ func DefaultErrorHandler(url *url.URL, isdebug bool, w ResponseWriterWithStatus,
 	if context.RouteMethod != method {
 		method += " -> " + context.RouteMethod
 	}
-	fmt.Printf("Finish [%s] %d %v Took %.2fms\n", method, w.Status(), url, time.Now().Sub(begin).Seconds()*1000)
+	fmt.Printf("Finish [%s] %d %v Took %.2fms\n", method, w.Status(), URLToString(URL), time.Now().Sub(begin).Seconds()*1000)
 }
 
 // NewMux returns a newly initialized Mux object that implements the Router
@@ -260,10 +260,10 @@ func (mx *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
-	url := GetOriginalURL(r)
-	if url == nil {
+	URL := GetOriginalURL(r)
+	if URL == nil {
 		urlCopy := *r.URL
-		url = &urlCopy
+		URL = &urlCopy
 	}
 	if rctx == nil {
 		r, rctx = GetOrNewRouteContextForRequest(r)
@@ -275,7 +275,7 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 
 	defer rctx.with(mx)()
 
-	ws := ResponseWriter(w)
+	ws := NewResponseWriter(w)
 	w = ws
 
 	if mx.logRequests || mx.interseptErrors {
@@ -289,7 +289,7 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 					if handler == nil {
 						handler = DefaultErrorHandler
 					}
-					handler(url, mx.debug, ws, r, rctx, begin, rec)
+					handler(URL, mx.debug, ws, r, rctx, begin, rec)
 				}
 			})
 		}
@@ -299,7 +299,7 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 				if handler == nil {
 					handler = DefaultLogRequestsHandler
 				}
-				handler(url, ws, r, rctx, begin)
+				handler(URL, ws, r, rctx, begin)
 			})
 		}
 

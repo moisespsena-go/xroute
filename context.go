@@ -123,7 +123,7 @@ func (x *RouteContext) URLParam(key string) string {
 // For example,
 //
 // func Instrument(next http.Handler) http.Handler {
-//   return http.HandlerFunc(func(w http.ResponseWriter, r *http.request) {
+//   return http.HandlerFunc(func(w http.NewResponseWriter, r *http.request) {
 //     next.ServeHTTP(w, r)
 //     routePattern := chi.RouteContext(r.Context()).RoutePattern()
 //     measure(w, r, routePattern)

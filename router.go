@@ -18,7 +18,7 @@
 //  	r.Use(middleware.Logger)
 //  	r.Use(middleware.Recoverer)
 //
-//  	r.Get("/", func(w http.ResponseWriter, r *http.request) {
+//  	r.Get("/", func(w http.NewResponseWriter, r *http.request) {
 //  		w.Write([]byte("root."))
 //  	})
 //
