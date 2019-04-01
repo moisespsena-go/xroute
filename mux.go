@@ -260,11 +260,9 @@ func (mx *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
-	URL := GetOriginalURL(r)
-	if URL == nil {
-		urlCopy := *r.URL
-		URL = &urlCopy
-	}
+	URL := *r.URL
+	URL.Path = r.RequestURI
+		
 	if rctx == nil {
 		r, rctx = GetOrNewRouteContextForRequest(r)
 	}
@@ -289,7 +287,7 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 					if handler == nil {
 						handler = DefaultErrorHandler
 					}
-					handler(URL, mx.debug, ws, r, rctx, begin, rec)
+					handler(&URL, mx.debug, ws, r, rctx, begin, rec)
 				}
 			})
 		}
@@ -299,7 +297,7 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 				if handler == nil {
 					handler = DefaultLogRequestsHandler
 				}
-				handler(URL, ws, r, rctx, begin)
+				handler(&URL, ws, r, rctx, begin)
 			})
 		}
 
