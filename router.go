@@ -96,6 +96,8 @@ type Router interface {
 	MethodT(method MethodType, pattern string, handler interface{})
 
 	// HTTP-method routing along `pattern`
+	HandleMethod(method string, pattern string, handler interface{})
+	HandleM(method MethodType, pattern string, handler interface{})
 	Connect(pattern string, h interface{})
 	Delete(pattern string, h interface{})
 	Get(pattern string, h interface{})

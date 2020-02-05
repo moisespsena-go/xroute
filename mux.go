@@ -5,17 +5,23 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"regexp"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/go-chi/chi/middleware"
 )
 
 var (
 	_ Router = &Mux{}
 )
+
+const (
+	SkipErrorInterseption key = iota
+	SkipRequestLogger
+)
+
+type key uint32
 
 type ErrorHandler func(URL *url.URL, debug bool, w ResponseWriter, r *http.Request, context *RouteContext, begin time.Time, err interface{})
 
@@ -70,7 +76,6 @@ type Mux struct {
 	// Custom method not allowed handler
 	methodNotAllowedHandler ContextHandler
 	buildRouterMutex        sync.Mutex
-	logRequests             bool
 	logRequestHandler       func(URL *url.URL, w ResponseWriter, r *http.Request, arg *RouteContext, begin time.Time)
 	interseptErrors         bool
 	debug                   bool
@@ -79,53 +84,6 @@ type Mux struct {
 	ApiExtensions           []string
 
 	overrides bool
-}
-
-var LogRequestIgnore, _ = regexp.Compile("\\.(css|js|jpg|png|ico|ttf|woff2?)$")
-
-func DefaultLogRequestsHandler(URL *url.URL, w ResponseWriter, r *http.Request, context *RouteContext, begin time.Time) {
-	if !LogRequestIgnore.MatchString(r.URL.Path) || w.Status() >= 400 {
-		method := r.Method
-		if context.RouteMethod != method {
-			method += " -> " + context.RouteMethod
-		}
-		context.Log.Debugf("Finish [%s] %d %v Took %.2fms", method, w.Status(), URLToString(URL), time.Now().Sub(begin).Seconds()*1000)
-	}
-}
-
-func prepareStack(stack []byte) []byte {
-	/*i := strings.LastIndex(string(stack), "runtime/panic.go")
-	i += len("runtime/panic.go") + 1
-	stack = stack[i:]
-	i = strings.IndexByte(string(stack), '\n')
-	stack = stack[i+1:]*/
-	return stack
-}
-
-func DefaultErrorHandler(URL *url.URL, isdebug bool, w ResponseWriter, r *http.Request, context *RouteContext, begin time.Time, err interface{}) {
-	w.WriteHeader(500)
-	errMessage := []byte(fmt.Sprintf("\nRequest failure: %v\n", err))
-	os.Stderr.Write(errMessage)
-
-	var stack []byte
-	if t, ok := err.(TracedError); ok {
-		stack = append(prepareStack(t.Trace()), []byte("\n")...)
-	} else {
-		stack = prepareStack(debug.Stack())
-	}
-
-	os.Stderr.Write(stack)
-	if isdebug {
-		w.Write(errMessage)
-		w.Write(stack)
-	} else {
-		w.Write([]byte("Request failure. See system administrator to solve it."))
-	}
-	method := r.Method
-	if context.RouteMethod != method {
-		method += " -> " + context.RouteMethod
-	}
-	fmt.Printf("Finish [%s] %d %v Took %.2fms\n", method, w.Status(), URLToString(URL), time.Now().Sub(begin).Seconds()*1000)
 }
 
 // NewMux returns a newly initialized Mux object that implements the Router
@@ -149,17 +107,10 @@ func NewMux(name ...string) *Mux {
 	return mux
 }
 
-func (mx *Mux) IsLogRequests() bool {
-	return mx.logRequests
-}
-
 func (mx *Mux) LogRequests() *Mux {
-	mx.logRequests = true
+	mx.Use(middleware.DefaultLogger)
+	mx.Use(middleware.Recoverer)
 	return mx
-}
-
-func (mx *Mux) SetLogRequests(v bool) {
-	mx.logRequests = v
 }
 
 func (mx *Mux) SetInterseptErrors(v bool) {
@@ -262,7 +213,7 @@ func (mx *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
 	URL := *r.URL
 	URL.Path = r.RequestURI
-		
+
 	if rctx == nil {
 		r, rctx = GetOrNewRouteContextForRequest(r)
 	}
@@ -276,38 +227,6 @@ func (mx *Mux) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *Ro
 	ws := NewResponseWriter(w)
 	w = ws
 
-	if mx.logRequests || mx.interseptErrors {
-		begin := time.Now()
-		var rec interface{}
-		var defers []func()
-		if mx.interseptErrors {
-			defers = append(defers, func() {
-				if rec != nil {
-					handler := mx.errorHandler
-					if handler == nil {
-						handler = DefaultErrorHandler
-					}
-					handler(&URL, mx.debug, ws, r, rctx, begin, rec)
-				}
-			})
-		}
-		if mx.logRequests {
-			defers = append(defers, func() {
-				handler := mx.logRequestHandler
-				if handler == nil {
-					handler = DefaultLogRequestsHandler
-				}
-				handler(&URL, ws, r, rctx, begin)
-			})
-		}
-
-		defer func() {
-			rec = recover()
-			for _, def := range defers {
-				def()
-			}
-		}()
-	}
 	// Ensure the mux has some routes defined on the mux
 	if mx.handler == nil {
 		// Build the final routing handler for this Mux.
@@ -733,6 +652,25 @@ func (mx *Mux) Headers(headers http.Header, f func(r Router)) {
 	}()
 	mx.headers = headers
 	f(mx)
+}
+
+// handle registers a http.Handler in the routing tree for a particular http method
+// and routing pattern.
+func (mx *Mux) HandleMethod(method string, pattern string, handler interface{}) {
+	var (
+		m  MethodType
+		ok bool
+	)
+	if m, ok = methodMap[method]; !ok {
+		panic(fmt.Errorf("method %q not registered", method))
+	}
+	mx.handle(m, pattern, handler)
+}
+
+// HandleM registers a http.Handler in the routing tree for a particular http method
+// and routing pattern.
+func (mx *Mux) HandleM(m MethodType, pattern string, handler interface{}) {
+	mx.handle(m, pattern, handler)
 }
 
 // handle registers a http.Handler in the routing tree for a particular http method

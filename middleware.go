@@ -2,6 +2,7 @@ package xroute
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -18,6 +19,10 @@ const (
 // to compose middleware chains and interface{}'s.
 type Middlewares []*Middleware
 
+func (this *Middlewares) Add(md ...*Middleware) {
+	*this = append(*this, md...)
+}
+
 type Middleware struct {
 	Name    string
 	Handler func(chain *ChainHandler)
@@ -26,12 +31,20 @@ type Middleware struct {
 }
 
 func NewMiddleware(f interface{}) *Middleware {
-	if h, ok := f.(func(chain *ChainHandler)); ok {
-		return &Middleware{Handler: h}
-	} else if m, ok := f.(*Middleware); ok {
-		return m
+	switch ft := f.(type) {
+	case func(chain *ChainHandler):
+		return &Middleware{Handler: ft}
+	case *Middleware:
+		return ft
+	case func(http.Handler) http.Handler:
+		return &Middleware{Handler: func(chain *ChainHandler) {
+			ft(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				chain.Next(w, r)
+			})).ServeHTTP(chain.Writer, chain.request)
+		}}
+	default:
+		panic(fmt.Errorf("Invalid Middleware: %s", f))
 	}
-	panic(fmt.Errorf("Invalid Middleware: %s", f))
 }
 
 type MiddlewaresStack struct {
@@ -100,9 +113,16 @@ func (stack *MiddlewaresStack) Has(name ...string) bool {
 }
 
 func (stack *MiddlewaresStack) AddInterface(items []interface{}, option int) *MiddlewaresStack {
-	mds := make(Middlewares, len(items), len(items))
-	for i, item := range items {
-		mds[i] = NewMiddleware(item)
+	var mds Middlewares
+	for _, item := range items {
+		switch it := item.(type) {
+		case Middlewares:
+			mds = append(mds, it...)
+		case []*Middleware:
+			mds = append(mds, it...)
+		default:
+			mds = append(mds, NewMiddleware(item))
+		}
 	}
 	return stack.Add(mds, option)
 }

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/op/go-logging"
+	"github.com/moisespsena-go/logging"
 )
 
 var (
@@ -53,7 +53,7 @@ type RouteContext struct {
 	ChainRequestSetters map[interface{}]ChainRequestSetter
 	Handler             interface{}
 	RouterStack         []Router
-	Log                 *logging.Logger
+	Log                 logging.Logger
 
 	ApiExt string
 }
