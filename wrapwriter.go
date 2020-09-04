@@ -20,12 +20,9 @@ type ResponseWriter interface {
 	HasStatus(status ...int) bool
 }
 
-func NewResponseWriter(w http.ResponseWriter, status ...int) ResponseWriter {
+func NewResponseWriter(w http.ResponseWriter) ResponseWriter {
 	if ws, ok := w.(ResponseWriter); ok {
 		return ws
-	}
-	if len(status) == 0 {
-		status = []int{0}
 	}
 	return &BasicWriter{ResponseWriter: w}
 }

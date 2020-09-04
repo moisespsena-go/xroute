@@ -3,6 +3,8 @@ package xroute
 import (
 	"fmt"
 	"net/http"
+
+	"github.com/moisespsena-go/httpu"
 )
 
 type ContextHandlerFunc func(handler ContextHandler, w http.ResponseWriter, r *http.Request, rctx *RouteContext)
@@ -170,4 +172,28 @@ func (eh EndpointHandler) ServeHTTPContext(w http.ResponseWriter, r *http.Reques
 		rctx.Handler = h
 		h.handler.ServeHTTPContext(w, r, rctx)
 	}
+}
+
+type FallbackHandlers []ContextHandler
+
+func (this FallbackHandlers) ServeHTTPContext(w http.ResponseWriter, r *http.Request, rctx *RouteContext) {
+	wtd := httpu.ResponseWriterOf(w)
+	for _, handler := range this {
+		handler.ServeHTTPContext(wtd, r, rctx)
+		if wtd.WroteHeader() {
+			return
+		}
+	}
+}
+func (this *FallbackHandlers) Add(handler ...ContextHandler) {
+	*this = append(*this, handler...)
+}
+
+func (this FallbackHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r, rctx := GetOrNewRouteContextForRequest(r)
+	this.ServeHTTPContext(w, r, rctx)
+}
+
+func Fallback(handlers ...ContextHandler) ContextHandler {
+	return FallbackHandlers(handlers)
 }

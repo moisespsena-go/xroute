@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/go-chi/chi/middleware"
 )
 
@@ -71,7 +73,7 @@ type Mux struct {
 	pool sync.Pool
 
 	// Custom route not found handler
-	notFoundHandler ContextHandler
+	notFoundHandler FallbackHandlers
 
 	// Custom method not allowed handler
 	methodNotAllowedHandler ContextHandler
@@ -105,6 +107,10 @@ func NewMux(name ...string) *Mux {
 		return NewRouteContext()
 	}
 	return mux
+}
+
+func (mx *Mux) Parent() *Mux {
+	return mx.parent
 }
 
 func (mx *Mux) LogRequests() *Mux {
@@ -390,7 +396,7 @@ func (mx *Mux) NotFound(handler interface{}) {
 	}
 
 	// Update the notFoundHandler from this point forward
-	m.notFoundHandler = hh
+	m.notFoundHandler.Add(hh)
 	m.updateSubRoutes(func(subMux *Mux) {
 		if subMux.notFoundHandler == nil {
 			subMux.NotFound(hh)
@@ -524,7 +530,9 @@ func (mx *Mux) Mount(pattern string, handler interface{}) {
 
 	if pattern == "" || pattern[len(pattern)-1] != '/' {
 		notFoundHandler := HttpHandler(func(w http.ResponseWriter, r *http.Request, arg *RouteContext) {
-			mx.NotFoundHandler().ServeHTTPContext(w, r, arg)
+			if nfh := mx.NotFoundHandler(); nfh != nil {
+				nfh.ServeHTTPContext(w, r, arg)
+			}
 		})
 
 		mx.handle(ALL|STUB, pattern, mh)
@@ -584,7 +592,7 @@ func (mx *Mux) NotFoundHandler() ContextHandler {
 	if mx.notFoundHandler != nil {
 		return mx.notFoundHandler
 	}
-	return HttpHandler(http.NotFoundHandler())
+	return nil
 }
 
 // MethodNotAllowedHandler returns the default Mux 405 responder whenever
@@ -645,6 +653,7 @@ func (mx *Mux) Api(f func(r Router)) {
 	mx.api = true
 	f(mx)
 }
+
 func (mx *Mux) Headers(headers http.Header, f func(r Router)) {
 	old := mx.headers
 	defer func() {
@@ -677,7 +686,7 @@ func (mx *Mux) HandleM(m MethodType, pattern string, handler interface{}) {
 // and routing pattern.
 func (mx *Mux) handle(method MethodType, pattern string, handler interface{}) (nodes []*node) {
 	if len(pattern) == 0 || pattern[0] != '/' {
-		panic(fmt.Sprintf("chi: routing pattern must begin with '/' in '%s'", pattern))
+		panic(errors.Wrap(BadPathern{pattern: pattern, message: "pattern must begin with '/'"}, "handle"))
 	}
 
 	// Build endpoint handler with inline middlewares for the route
@@ -780,8 +789,8 @@ func (mx *Mux) routeHTTP(w http.ResponseWriter, r *http.Request, rctx *RouteCont
 
 	if rctx.methodNotAllowed {
 		mx.MethodNotAllowedHandler().ServeHTTPContext(w, r, rctx)
-	} else {
-		mx.NotFoundHandler().ServeHTTPContext(w, r, rctx)
+	} else if nfh := mx.NotFoundHandler(); nfh != nil {
+		nfh.ServeHTTPContext(w, r, rctx)
 	}
 }
 
